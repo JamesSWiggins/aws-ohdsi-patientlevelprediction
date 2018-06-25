@@ -1,0 +1,462 @@
+# Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"). You may not use this file except in compliance with the License. 
+# A copy of the License is located at
+#    http://aws.amazon.com/apache2.0/
+# or in the "license" file accompanying this file. This file is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, 
+# either express or implied. See the License for the specific language governing permissions and limitations under the License.
+
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This CloudFormation Template deploys a complete OHDSI environment.  It
+  depends on the OHDSI-VPC CloudFormation Template.
+
+
+
+Parameters:
+  EBEndpoint:
+    Description: "The unique name to use for your Elastic Beanstalk URL (will be rendered http://(EBEndpoint).(region).elasticbeanstalk.com)"
+    Type: String
+    Default: myOHDSIapplication
+  UserIPRange:
+    Description: CIDR Source IP Address Range For Users To Access Atlas. (default 0.0.0.0/0 will allow users from the entire Internet)
+    Default: 0.0.0.0/0
+    Type: String
+    AllowedPattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}(\/([0-9]|[1-2][0-9]|3[0-2]))?$
+    ConstraintDescription: "Must be a valid IPv4 CIDR Address Range. (a.b.c.d/n)"
+  DatabasePassword:
+    Description: Password for Redshift and RDS Aurora Postgres databases.  It is a security best practice to change this password from the default.
+    Default: yourOHDSIpassword1
+    Type: String
+    NoEcho: true
+    AllowedPattern: ^(?=.{8,32}$)(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).*
+    ConstraintDescription: "Must be between 8-32 characters and contain one or must upper case letters, lower case letters, and numbers."
+  KPair:
+    Description: The EC2 Key Pair to use for the Atlas/WebAPI EC2 Instances.
+    Type: AWS::EC2::KeyPair::KeyName
+  RStudio:
+    Type: String
+    AllowedValues: 
+      - true
+      - false
+    Default: false
+    Description: Set this to true if you want an R-Studio server deployed with OHDSI R Libraries installed.
+  RStudioInstanceType:
+    Type: String
+    Description: Instance type for the R-Studio server.
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - t2.xlarge
+      - t2.2xlarge
+      - m5.large
+      - m5.xlarge
+      - m5.2xlarge
+      - m5.4xlarge
+      - m5.10xlarge
+      - m5.16xlarge
+      - c5.large
+      - c5.xlarge
+      - c5.2xlarge
+      - c5.4xlarge
+      - c5.8xlarge
+      - r4.large
+      - r4.xlarge
+      - r4.2xlarge
+      - r4.4xlarge
+      - r4.8xlarge
+      - r4.16xlarge
+      - g2.2xlarge
+      - g2.8xlarge
+      - p2.xlarge
+      - p2.8xlarge
+      - p2.16xlarge
+      - g3.4xlarge
+      - g3.8xlarge
+      - g3.16xlarge
+    ConstraintDescription: Valid instance type in the t2, m5, c5, r4, g2, p2, and g3 families
+    Default: t2.xlarge
+  RStudioHomeDirectorySize:
+    Description: Only used if the RStudio parameter is set to 'true'.  The amount of encrypted disk space, in GBs, allocated to store R-Studio user's local data.
+    Type: Number
+    Default: 20
+  RStudioUserList:
+    Description: Only used if the RStudio parameter is set to 'true'.  Provide a comma separated list of usernames and passwords (user1,pass1,user2,pass2) to create on the R-Studio Server.
+    Type: 'String'
+    NoEcho: true
+    Default: 'rstudio,yourRSTUDIOpassword1'
+
+#Mapping to find the Amazon Linux AMI in each region.  This AMI is used for the temporary EC2 server.
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMI: ami-467ca739
+    us-east-2:
+      AMI: ami-976152f2
+    us-west-1:
+      AMI: ami-46e1f226
+    us-west-2:
+      AMI: ami-6b8cef13
+    ca-central-1:
+      AMI: ami-2f39bf4b
+    eu-west-1:
+      AMI: ami-9cbe9be5
+    eu-west-2:
+      AMI: ami-c12dcda6
+    eu-west-3:
+      AMI: ami-cae150b7
+    eu-central-1:
+      AMI: ami-1b316af0
+    sa-east-1:
+      AMI: ami-f09dcc9c
+    ap-south-1:
+      AMI: ami-b46f48db
+    ap-southeast-1:
+      AMI: ami-64260718
+    ap-southeast-2:
+      AMI: ami-60a26a02
+    ap-northeast-1:
+      AMI: ami-28ddc154
+    ap-northeast-2:
+      AMI: ami-efaf0181
+
+Conditions:
+  CreateRStudio: !Equals [ !Ref RStudio, true ]
+
+Resources:
+# Calls the referenced CloudFormation template to build the required VPC, subnets, routing, security groups, and IAM roles needed for this template.
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/ohdsi-r-studio-emr/OHDSI-Rstudio-VPC.yaml
+      Parameters:
+        UserIPRangeParm: !Ref 'UserIPRange'
+  
+
+# Defines the Elastic Beanstalk environment that deploys the load balancer and Atlas/WebAPI Tomcat servers in an auto-scaling group.
+  OHDSIApp:
+    Type: 'AWS::ElasticBeanstalk::Application'
+    DependsOn: EC2WaitCondition   
+    Description: OHDSI Atlas and WebAPI
+    Properties:
+      ApplicationVersions:
+        - Description: Version 1.0
+          SourceBundle:
+            S3Bucket: !Sub '${AWS::AccountId}-${AWS::StackName}-ohdsi-output'
+            S3Key: ohdsi-webapi-atlas.zip
+          VersionLabel: Initial Version
+  OHDSIEnvironment:
+    Type: 'AWS::ElasticBeanstalk::Environment'
+    DependsOn: EC2WaitCondition
+    Properties:
+      ApplicationName: !Ref 'OHDSIApp'
+      Description: Elastic Beanstalk deployment of OHDSI Atlas and WebAPI
+      SolutionStackName: !Select [1, !Split ['"', !Select [0, !Split ['}', !Select [1, !Split [':', !GetAtt 'EC2WaitCondition.Data']]]]]]
+      VersionLabel: Initial Version
+      EnvironmentName: !Ref EBEndpoint
+      CNAMEPrefix: !Ref EBEndpoint
+      Tier:
+        Name: WebServer
+        Type: Standard
+        Version: ' '
+      OptionSettings:
+        - Namespace: 'aws:autoscaling:launchconfiguration'
+          OptionName: IamInstanceProfile
+          Value: !GetAtt 'VPCStack.Outputs.EBInstanceProfile' 
+        - Namespace: 'aws:elasticbeanstalk:environment'
+          OptionName: ServiceRole
+          Value: !GetAtt 'VPCStack.Outputs.EBServiceRole'        
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: EnvironmentType
+          Value: LoadBalanced
+        - Namespace: aws:autoscaling:asg
+          OptionName: MinSize
+          Value: '2'
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: EC2KeyName
+          Value: !Ref 'KPair'
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: InstanceType
+          Value: t2.medium
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: SecurityGroups
+          Value: !GetAtt 'VPCStack.Outputs.SGApp'
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: SSHSourceRestriction
+          Value: 'tcp, 22, 22, 127.0.0.1/32'
+        - Namespace: aws:autoscaling:trigger
+          OptionName: MeasureName
+          Value: CPUUtilization
+        - Namespace: aws:autoscaling:trigger
+          OptionName: Unit
+          Value: Percent
+        - Namespace: aws:autoscaling:trigger
+          OptionName: UpperThreshold
+          Value: '80'
+        - Namespace: aws:autoscaling:trigger
+          OptionName: LowerThreshold
+          Value: '20'
+        - Namespace: aws:autoscaling:updatepolicy:rollingupdate
+          OptionName: MaxBatchSize
+          Value: '1'
+        - Namespace: aws:autoscaling:updatepolicy:rollingupdate
+          OptionName: MinInstancesInService
+          Value: '1'
+        - Namespace: aws:autoscaling:updatepolicy:rollingupdate
+          OptionName: RollingUpdateEnabled
+          Value: 'true'
+        - Namespace: aws:autoscaling:updatepolicy:rollingupdate
+          OptionName: RollingUpdateType
+          Value: Health
+        - Namespace: aws:ec2:vpc
+          OptionName: AssociatePublicIpAddress
+          Value: 'false'
+        - Namespace: aws:ec2:vpc
+          OptionName: ELBSubnets
+          Value: !Join
+            - ','
+            - - !GetAtt 'VPCStack.Outputs.SubnetPublicA'
+              - !GetAtt 'VPCStack.Outputs.SubnetPublicB'
+        - Namespace: aws:ec2:vpc
+          OptionName: Subnets
+          Value: !Join
+            - ','
+            - - !GetAtt 'VPCStack.Outputs.SubnetAppA'
+              - !GetAtt 'VPCStack.Outputs.SubnetAppB'
+        - Namespace: aws:ec2:vpc
+          OptionName: VPCId
+          Value: !GetAtt 'VPCStack.Outputs.VPCId'
+        - Namespace: aws:elasticbeanstalk:command
+          OptionName: DeploymentPolicy
+          Value: Rolling
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: LoadBalancerType
+          Value: application
+        - Namespace: aws:elasticbeanstalk:healthreporting:system
+          OptionName: SystemType
+          Value: enhanced
+        - Namespace: aws:elbv2:loadbalancer
+          OptionName: SecurityGroups
+          Value: !GetAtt 'VPCStack.Outputs.SGPublic'
+        - Namespace: aws:elbv2:loadbalancer
+          OptionName: ManagedSecurityGroup
+          Value: !GetAtt 'VPCStack.Outputs.SGPublic'
+        - Namespace: aws:elb:policies
+          OptionName: ConnectionDrainingEnabled
+          Value: 'true'  
+
+
+
+
+# Deploys the RDS Aurora Postgres cluster used to store the application data for WebAPI.
+  RDSCluster:
+    Type: AWS::RDS::DBCluster
+    DependsOn: VPCStack
+    Properties:
+      MasterUsername: 'master'
+      MasterUserPassword: !Ref DatabasePassword
+      Engine: aurora-postgresql
+      StorageEncrypted: 'True'
+      Port: 5432
+      DBSubnetGroupName:
+        Ref: RDSDBSubnets
+      DBClusterParameterGroupName:
+        Ref: RDSDBClusterParameterGroup
+      VpcSecurityGroupIds:
+        - !GetAtt 'VPCStack.Outputs.SGData'
+  RDSDBInstance1:
+    Type: AWS::RDS::DBInstance
+    DependsOn: VPCStack
+    Properties:
+      DBSubnetGroupName:
+        Ref: RDSDBSubnets
+      DBParameterGroupName:
+        Ref: RDSDBParameterGroup
+      Engine: aurora-postgresql
+      DBClusterIdentifier:
+        Ref: RDSCluster
+      PubliclyAccessible: 'false'
+      DBInstanceClass: db.r4.large
+  RDSDBInstance2:
+    Type: AWS::RDS::DBInstance
+    DependsOn: VPCStack
+    Properties:
+      DBSubnetGroupName:
+        Ref: RDSDBSubnets
+      DBParameterGroupName:
+        Ref: RDSDBParameterGroup
+      Engine: aurora-postgresql
+      DBClusterIdentifier:
+        Ref: RDSCluster
+      PubliclyAccessible: 'false'
+      DBInstanceClass: db.r4.large
+  RDSDBClusterParameterGroup:
+    Type: AWS::RDS::DBClusterParameterGroup
+    DependsOn: VPCStack
+    Properties:
+      Description: CloudFormation Sample Aurora Cluster Parameter Group
+      Family: aurora-postgresql9.6
+      Parameters:
+        rds.force_ssl: 1
+  RDSDBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    DependsOn: VPCStack
+    Properties:
+      Description: CloudFormation Sample Aurora Parameter Group
+      Family: aurora-postgresql9.6
+      Parameters:
+        log_rotation_age: 60
+  RDSDBSubnets:
+    Type: AWS::RDS::DBSubnetGroup
+    DependsOn: VPCStack
+    Properties:
+      DBSubnetGroupDescription: Subnet Group for RDS
+      SubnetIds:
+        - !GetAtt 'VPCStack.Outputs.SubnetDataA'
+        - !GetAtt 'VPCStack.Outputs.SubnetDataB'
+
+
+# Deploys the Redshift Cluster used to house the OMOP CDM and Results schema.
+  RedshiftCluster: 
+    Type: "AWS::Redshift::Cluster"
+    DependsOn: VPCStack
+    Properties:
+      DBName: "mycdm"
+      MasterUsername: "master"
+      MasterUserPassword: !Ref DatabasePassword
+      NodeType: "dc1.large"
+      ClusterType: "multi-node"
+      NumberOfNodes: 2
+      Encrypted: "True"
+      PubliclyAccessible: "False"
+      ClusterParameterGroupName: !Ref RedshiftClusterParameterGroup
+      IamRoles: 
+        - !GetAtt 'VPCStack.Outputs.RSRoleArn'
+      VpcSecurityGroupIds: 
+        - !GetAtt 'VPCStack.Outputs.SGData'
+      ClusterSubnetGroupName:
+        Ref: RedshiftSubnetGroup
+  RedshiftSubnetGroup:
+    Type: 'AWS::Redshift::ClusterSubnetGroup'
+    Properties:
+      Description: "Redshift Security Groups"
+      SubnetIds:
+        - !GetAtt 'VPCStack.Outputs.SubnetDataA'
+  RedshiftClusterParameterGroup: 
+    Type: "AWS::Redshift::ClusterParameterGroup"
+    Properties: 
+      Description: "My parameter group"
+      ParameterGroupFamily: "redshift-1.0"
+      Parameters: 
+        - 
+          ParameterName: "require_ssl"
+          ParameterValue: "true"
+
+
+
+
+# This is a temporary EC2 server used to do the following: 
+#  * Create the appropriate database and users for WebAPI inside Aurora Postgres.
+#  * Download the WebAPI and Atlas source from GitHub.
+#  * Provide the appropriate URLs for the WebAPI database and Atlas, compile WebAPI, and combine it with Atlas.
+#  * Upload this application bundle to S3 to be used by Elastic Beanstalk.
+#  * Load the build the OMOP CDM and Results schema on Redshift
+#  * Load the CMS DE-SynPUF 1K sample data and the Athena provided vocabularies into Redshift.
+#  * Once WebAPI flyback has deployed the approrpriate schema, load Redshift CDM, Vocabulary, and Results data sources into the WebAPI database.
+#  * Restart WebAPI to recognize the new data sources.
+#  * Download the Achilles R scripts from GitHub and use them to populate the Results data.
+
+  OHDSItempEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - RedshiftCluster
+      - RDSDBInstance1
+      - RDSDBInstance2
+    Properties:
+      InstanceInitiatedShutdownBehavior: 'terminate'
+      InstanceType: 'm4.xlarge'
+      KeyName: !Ref 'KPair'
+      ImageId: !FindInMap
+        - RegionMap
+        - !Ref 'AWS::Region'
+        - AMI
+      IamInstanceProfile: !GetAtt 'VPCStack.Outputs.TempEC2InstanceProfile'
+      SecurityGroupIds: 
+        - !GetAtt 'VPCStack.Outputs.SGApp'
+      SubnetId: !GetAtt 'VPCStack.Outputs.SubnetAppA'
+      UserData:
+        Fn::Base64: !Sub
+          - | 
+            #!/bin/bash
+            export RDS_ENDPOINT=${RDSEndpoint}
+            export EB_ENDPOINT=${EBEndpoint}.${AWS::Region}.elasticbeanstalk.com
+            export REDSHIFT_ENDPOINT=${RedshiftEndpoint}
+            export ACCT_ID=${AWS::AccountId}
+            export BUCKET_NAME=${AWS::AccountId}-${AWS::StackName}-ohdsi-output
+            export DATABASE_PASSWORD=${DBPassword}
+            export RS_ROLE_ARN=${RSROLEARN}
+            export AWS_DEFAULT_REGION=$(echo $EB_ENDPOINT | cut -d . -f2)
+            export RSTUDIO_TARGET_GROUP_ARN=${RstudioTargetGroupArn}
+            sudo yum install -y git
+            git clone https://github.com/JamesSWiggins/aws-ohdsi-rstudio-automated-deployment
+            cd aws-ohdsi-rstudio-automated-deployment
+            sudo yum install -y awslogs
+            sed -i 's!'EB_ENDPOINT'!'$EB_ENDPOINT'!' awslogs.conf
+            sudo cp awslogs.conf /etc/awslogs/awslogs.conf
+            sudo sed -i 's!'us-east-1'!'$AWS_DEFAULT_REGION'!' /etc/awslogs/awscli.conf
+            sudo service awslogs start
+            sudo -E bash ./config_ohdsi.sh &>> log.txt
+            export SOLUTION_STACK=`aws elasticbeanstalk list-available-solution-stacks | grep "Tomcat 8" | head -1 | cut -d \" -f2`
+            /opt/aws/bin/cfn-signal --stack ${AWS::StackName} --region ${AWS::Region} "${EC2WaitHandle}" -d "$SOLUTION_STACK"
+            sudo -E bash ./config_db.sh &>> log.txt
+            aws s3 cp log.txt s3://$BUCKET_NAME
+            shutdown -h now
+          - { RDSEndpoint: !GetAtt RDSCluster.Endpoint.Address, RedshiftEndpoint: !GetAtt RedshiftCluster.Endpoint.Address, DBPassword: !Ref DatabasePassword, RSROLEARN: !GetAtt VPCStack.Outputs.RSRoleArn, RstudioTargetGroupArn: !If [ CreateRStudio, !Ref RStudioTargetGroup, 'none' ] }
+  EC2WaitCondition:
+    Type: "AWS::CloudFormation::WaitCondition"
+    DependsOn: "OHDSItempEC2Instance"
+    Properties: 
+      Handle: 
+        Ref: "EC2WaitHandle"
+      Timeout: "3600"
+      Count: 1
+  EC2WaitHandle:
+    Type: "AWS::CloudFormation::WaitConditionHandle"
+
+
+  RStudioStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateRStudio
+    DependsOn: VPCStack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/ohdsi-r-studio-emr/ohdsi-rstudio-ssm.yaml
+      Parameters:
+        VPCSubnet: !GetAtt 'VPCStack.Outputs.SubnetAppA'
+        RStudioSecurityGroup: !GetAtt 'VPCStack.Outputs.SGApp'
+        InstanceType: !Ref 'RStudioInstanceType'
+        HomeDirectorySize: !Ref 'RStudioHomeDirectorySize'
+        UserList: !Ref 'RStudioUserList'
+        KeyPair: !Ref 'KPair'
+  RStudioTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: RStudioStack
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 4
+      Matcher:
+        HttpCode: '200'
+      Name: RStudioOHDSI
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: '20'
+      Targets:
+      - Id: !GetAtt 'RStudioStack.Outputs.RStudioInstanceId'
+        Port: 8787
+      UnhealthyThresholdCount: 3
+      VpcId: !GetAtt 'VPCStack.Outputs.VPCId'

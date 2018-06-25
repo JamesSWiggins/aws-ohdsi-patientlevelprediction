@@ -1,0 +1,469 @@
+# Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License"). You may not use this file except in compliance with the License. 
+# A copy of the License is located at
+#    http://aws.amazon.com/apache2.0/
+# or in the "license" file accompanying this file. This file is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, 
+# either express or implied. See the License for the specific language governing permissions and limitations under the License.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This CloudFormation Template creates the VPC, subnets, routing, NAT Gateways, security groups and IAM Roles to support OHDSI.
+
+Parameters:
+  UserIPRangeParm:
+    Description: CIDR Source IP Address Range For Users To Access Atlas. (default 0.0.0.0/0 will allow users from the entire Internet)
+    Default: 0.0.0.0/0
+    Type: String
+    AllowedPattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}(\/([0-9]|[1-2][0-9]|3[0-2]))?$
+
+
+
+Resources:
+  vpc27bc775f:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      InstanceTenancy: default
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'false'
+      Tags:
+        - Key: Name
+          Value: OHDSI VPC
+
+
+#Defines Internet Connectivity
+  igw8d9149f4:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: PHP IGW
+  gw1:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'vpc27bc775f'
+      InternetGatewayId: !Ref 'igw8d9149f4'
+
+
+
+#Defines NAT Gateway so that the Elastic Beanstalk servers and the temporary EC2 server can talk to the Internet
+  NAT:
+    DependsOn: gw1
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt 'EIP.AllocationId'
+      SubnetId: !Ref 'subnetd3e13a98'
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+
+
+
+  #Defines two availability zones of subnets for the three tier network architecture
+  subnet3d504d67:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.1.5.0/24
+      AvailabilityZone: !Join [ "", [ !Ref 'AWS::Region', "b" ] ]
+      VpcId: !Ref 'vpc27bc775f'
+      Tags:
+        - Key: Name
+          Value: Data B
+  subnet864d50dc:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.1.3.0/24
+      AvailabilityZone: !Join [ "", [ !Ref 'AWS::Region', "b" ] ]
+      VpcId: !Ref 'vpc27bc775f'
+      Tags:
+        - Key: Name
+          Value: App B
+  subnet7aee3531:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.1.4.0/24
+      AvailabilityZone: !Join [ "", [ !Ref 'AWS::Region', "a" ] ]
+      VpcId: !Ref 'vpc27bc775f'
+      Tags:
+        - Key: Name
+          Value: Data A
+  subnetbae43ff1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.1.2.0/24
+      AvailabilityZone: !Join [ "", [ !Ref 'AWS::Region', "a" ] ]
+      VpcId: !Ref 'vpc27bc775f'
+      Tags:
+        - Key: Name
+          Value: App A
+  subnetd3e13a98:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.1.0.0/24
+      AvailabilityZone: !Join [ "", [ !Ref 'AWS::Region', "a" ] ]
+      MapPublicIpOnLaunch: 'True'
+      VpcId: !Ref 'vpc27bc775f'
+      Tags:
+        - Key: Name
+          Value: Public A
+  subnet2c5c4176:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.1.1.0/24
+      AvailabilityZone: !Join [ "", [ !Ref 'AWS::Region', "b" ] ]
+      MapPublicIpOnLaunch: 'True'
+      VpcId: !Ref 'vpc27bc775f'
+      Tags:
+        - Key: Name
+          Value: Public B
+  
+
+
+#Security Groups for the three tiered network architecture
+  PublicSG:
+    DependsOn: EIP
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Load Balancers
+      VpcId: !Ref 'vpc27bc775f'
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: !Ref 'UserIPRangeParm'
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: !Join [ "", [ !Ref 'EIP', "/32" ] ]
+      Tags:
+        - Key: Name
+          Value: Public Security Group
+  AppSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Application Servers
+      VpcId: !Ref 'vpc27bc775f'
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        SourceSecurityGroupId: !Ref 'PublicSG'
+      - IpProtocol: tcp
+        FromPort: '8787'
+        ToPort: '8787'
+        SourceSecurityGroupId: !Ref 'PublicSG'   
+      Tags:
+        - Key: Name
+          Value: App Security Group
+  DataSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Databases
+      VpcId: !Ref 'vpc27bc775f'
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '5432'
+        ToPort: '5439'
+        SourceSecurityGroupId: !Ref 'AppSG'
+      Tags:
+        - Key: Name
+          Value: DB Security Group
+
+
+  
+#Route tables and route definitions for the three tiered network architecture
+  Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'rtb425bda38'
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref 'NAT'
+  rtb425bda38:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'vpc27bc775f'
+  rtb3756d74d:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'vpc27bc775f'
+      Tags:
+        - Key: Name
+          Value: Public  
+  subnetroute1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref 'rtb3756d74d'
+      SubnetId: !Ref 'subnet2c5c4176'
+  subnetroute2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref 'rtb3756d74d'
+      SubnetId: !Ref 'subnetd3e13a98'
+  subnetroute3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref 'rtb425bda38'
+      SubnetId: !Ref 'subnet3d504d67'
+  subnetroute4:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref 'rtb425bda38'
+      SubnetId: !Ref 'subnet864d50dc'
+  subnetroute5:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref 'rtb425bda38'
+      SubnetId: !Ref 'subnet7aee3531'
+  subnetroute6:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref 'rtb425bda38'
+      SubnetId: !Ref 'subnetbae43ff1'
+  route2:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId: !Ref 'rtb3756d74d'
+      GatewayId: !Ref 'igw8d9149f4'
+    DependsOn: gw1  
+
+
+
+
+
+#Elastic Beanstalk IAM Roles
+  ServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: elasticbeanstalk.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'sts:ExternalId': elasticbeanstalk
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'elasticloadbalancing:DescribeInstanceHealth'
+                  - 'elasticloadbalancing:DescribeLoadBalancers'
+                  - 'elasticloadbalancing:DescribeTargetHealth'
+                  - 'ec2:DescribeInstances'
+                  - 'ec2:DescribeInstanceStatus'
+                  - 'ec2:GetConsoleOutput'
+                  - 'ec2:AssociateAddress'
+                  - 'ec2:DescribeAddresses'
+                  - 'ec2:DescribeSecurityGroups'
+                  - 'sqs:GetQueueAttributes'
+                  - 'sqs:GetQueueUrl'
+                  - 'autoscaling:DescribeAutoScalingGroups'
+                  - 'autoscaling:DescribeAutoScalingInstances'
+                  - 'autoscaling:DescribeScalingActivities'
+                  - 'autoscaling:DescribeNotificationConfigurations'
+                Resource:
+                  - '*'
+      Path: /
+  InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref InstanceProfileRole
+  InstanceProfileRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: BucketAccess
+                Action:
+                  - 's3:Get*'
+                  - 's3:List*'
+                  - 's3:PutObject'
+                Effect: Allow
+                Resource:
+                  - !Join 
+                    - ''
+                    - - 'arn:aws'
+                      - ':s3:::elasticbeanstalk-*-'
+                      - !Ref 'AWS::AccountId'
+                  - !Join 
+                    - ''
+                    - - 'arn:aws'
+                      - ':s3:::elasticbeanstalk-*-'
+                      - !Ref 'AWS::AccountId'
+                      - /*
+                  - !Join 
+                    - ''
+                    - - 'arn:aws'
+                      - ':s3:::elasticbeanstalk-*-'
+                      - !Ref 'AWS::AccountId'
+                      - '-*'
+                  - !Join 
+                    - ''
+                    - - 'arn:aws'
+                      - ':s3:::elasticbeanstalk-*-'
+                      - !Ref 'AWS::AccountId'
+                      - '-*/*'
+              - Sid: MetricsAccess
+                Action:
+                  - 'cloudwatch:PutMetricData'
+                Effect: Allow
+                Resource: '*'
+              - Sid: EncryptedEBS
+                Action:
+                  - 'ec2:CreateVolume'
+                  - 'ec2:AttachVolume'
+                  - 'ec2:ModifyInstanceAttribute'
+                  - "ec2:Describe*"
+                Effect: Allow
+                Resource: '*'
+      Path: /
+
+
+
+#IAM Role for Redshift to COPY sample data from S3
+  RedshiftRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - redshift.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+  RedshiftRolePolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: root
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: 
+              - 's3:Get*'
+              - 's3:List*'
+            Resource: '*'
+      Roles:
+        - !Ref 'RedshiftRole'
+  RedshiftInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref 'RedshiftRole'
+
+
+
+#IAM Roles for the temporary EC2 server to compile Atlas and WebAPI, apply the database DDLs, load the sample data, and run Achilles
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+  EC2RolePolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: root
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: 
+              - "s3:PutObject"
+              - "s3:GetObject"
+              - "s3:ListObjects"
+              - "s3:CreateBucket"
+              - "s3:ListBucket"
+              - "elasticbeanstalk:RestartAppServer"
+              - "elasticbeanstalk:ListAvailableSolutionStacks"
+              - "elasticbeanstalk:DescribeEnvironmentResources"
+              - "elasticloadbalancing:RegisterTargets"
+              - "elasticloadbalancing:DescribeTargetGroups"
+              - "elasticloadbalancing:DescribeLoadBalancers"
+              - "elasticloadbalancing:DescribeListeners"
+              - "elasticloadbalancing:CreateRule"
+              - "elasticloadbalancing:DescribeRules"
+              - "autoscaling:DescribeAutoScalingGroups"
+              - "cloudformation:DescribeStackResources"
+              - "cloudformation:DescribeStackResource"
+            Resource: '*'
+          - Effect: Allow
+            Action: 
+              - 'logs:CreateLogGroup'
+              - 'logs:CreateLogStream'
+              - 'logs:PutLogEvents'
+              - 'logs:DescribeLogStreams'
+            Resource: 'arn:aws:logs:*:*:*'
+      Roles:
+        - !Ref 'EC2Role'
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref 'EC2Role'
+
+
+
+
+#Return the created resources to the Master template
+Outputs:
+  VPCId:
+    Value: !Ref 'vpc27bc775f'
+  SubnetPublicA:
+    Value: !Ref 'subnetd3e13a98'
+  SubnetPublicB:
+    Value: !Ref 'subnet2c5c4176'
+  SubnetAppA:
+    Value: !Ref 'subnetbae43ff1'
+  SubnetAppB:
+    Value: !Ref 'subnet864d50dc'
+  SubnetDataA:
+    Value: !Ref 'subnet7aee3531'
+  SubnetDataB:
+    Value: !Ref 'subnet3d504d67'
+  SGPublic:
+    Value: !Ref 'PublicSG'
+  SGApp:
+    Value: !Ref 'AppSG'
+  SGData:
+    Value: !Ref 'DataSG'
+  EBServiceRole:
+    Value: !Ref 'ServiceRole'
+  EBInstanceProfile:
+    Value: !Ref 'InstanceProfile'
+  TempEC2InstanceProfile:
+    Value: !Ref 'EC2InstanceProfile'
+  RSRoleArn:
+    Value: !GetAtt 'RedshiftRole.Arn'
+  

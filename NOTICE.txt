@@ -1,0 +1,14 @@
+Creating Data Science Environments on AWS for Health Analysis using OHDSI Blog Post
+Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved. 
+
+
+**********************
+THIRD PARTY COMPONENTS
+**********************
+This software includes third party software subject to the following copyrights:
+
+config-local.js - No NOTICE file, but part of the OHDSI Atlas package
+OMOP CDM ddl - Redshift.sql - No NOTICE file, but part of the OHDSI CommonDataModel package
+settings.xml - No NOTICE file, but part of the OHDSI WebAPI package
+
+The licenses for these third party components are also Apache 2.0 and included in LICENSE.txt
