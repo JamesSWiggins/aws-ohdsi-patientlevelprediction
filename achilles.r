@@ -9,8 +9,8 @@
 
 install.packages("devtools",repos = "http://cran.us.r-project.org")
 library(devtools)
-devtools::install_github("ohdsi/SqlRender", ref = "v1.4.10")
-devtools::install_github("ohdsi/DatabaseConnector", ref = "v2.1.0")
+devtools::install_github("ohdsi/SqlRender", ref = "v1.5.0")
+devtools::install_github("ohdsi/DatabaseConnector", ref = "v2.1.2")
 devtools::install_github("ohdsi/Achilles", ref = "v1.5.0")
 library(Achilles)
 connectionDetails <- createConnectionDetails(dbms="redshift", server="REDSHIFT_ENDPOINT/mycdm", user="master",

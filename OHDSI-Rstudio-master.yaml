@@ -400,8 +400,10 @@ Resources:
             export AWS_DEFAULT_REGION=$(echo $EB_ENDPOINT | cut -d . -f2)
             export RSTUDIO_TARGET_GROUP_ARN=${RstudioTargetGroupArn}
             sudo yum install -y git
-            git clone https://github.com/JamesSWiggins/aws-ohdsi-rstudio-automated-deployment
-            cd aws-ohdsi-rstudio-automated-deployment
+            git clone https://github.com/JamesSWiggins/aws-ohdsi-patientlevelprediction
+            cd aws-ohdsi-patientlevelprediction
+            git clone -b v2.4.2 https://github.com/OHDSI/Atlas
+            git clone -b v2.4.2 https://github.com/OHDSI/WebAPI
             sudo yum install -y awslogs
             sed -i 's!'EB_ENDPOINT'!'$EB_ENDPOINT'!' awslogs.conf
             sudo cp awslogs.conf /etc/awslogs/awslogs.conf
