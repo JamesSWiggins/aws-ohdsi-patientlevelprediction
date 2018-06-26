@@ -443,6 +443,7 @@ Resources:
         KeyPair: !Ref 'KPair'
   RStudioTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: CreateRStudio
     DependsOn: RStudioStack
     Properties:
       HealthCheckIntervalSeconds: 30
@@ -451,7 +452,7 @@ Resources:
       HealthyThresholdCount: 4
       Matcher:
         HttpCode: '200'
-      Name: RStudioOHDSI
+      Name: !Sub 'OHDSIRstudio-${AWS::StackName}'
       Port: 80
       Protocol: HTTP
       TargetGroupAttributes:

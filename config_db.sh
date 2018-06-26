@@ -114,4 +114,4 @@ sudo sh -c "source /etc/profile"
 # fix java binding - R and packages have to be compiled with the same java version as hadoop
 sudo R CMD javareconf
 
-Rscript /aws-ohdsi-rstudio-automated-deployment/achilles.r 
+Rscript /aws-ohdsi-patientlevelprediction/achilles.r 
