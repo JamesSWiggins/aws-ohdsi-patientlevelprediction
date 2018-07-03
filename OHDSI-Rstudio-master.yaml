@@ -11,7 +11,52 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: This CloudFormation Template deploys a complete OHDSI environment.  It
   depends on the OHDSI-VPC CloudFormation Template.
 
+  
 
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: General AWS
+      Parameters:
+        - KPair
+        - UserIPRange
+    - Label:
+          default: OHDSI Atlas
+      Parameters:
+        - EBEndpoint
+        - DatabasePassword
+        - RedshiftInstanceType
+    - Label:
+          default: RStudio
+      Parameters:
+        - RStudio
+        - RStudioInstanceType
+        - RStudioHomeDirectorySize
+        - RStudioUserList
+
+    
+    
+    ParameterLabels:
+      KPair:
+        default: EC2 Key Pair
+      UserIPRange:
+        default: Atlas and RStudio Access From
+      EBEndpoint:
+        default: Elastic Beanstalk Endpoint Name
+      DatabasePassword:
+        default: Aurora Postgres and Redshift master password
+      RStudio: 
+        default: Do you want to deploy RStudio?
+      RStudioInstanceType:
+        default: Instance Type to use for RStudio
+      RedshiftInstanceType:
+        default: Instance Type for Redshift cluster nodes
+      RStudioHomeDirectorySize:
+        default: Home Directory size for RStudio instance
+      RStudioUserList:
+        default: Comma-delimited user list for RStudio
 
 Parameters:
   EBEndpoint:
@@ -25,12 +70,23 @@ Parameters:
     AllowedPattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}(\/([0-9]|[1-2][0-9]|3[0-2]))?$
     ConstraintDescription: "Must be a valid IPv4 CIDR Address Range. (a.b.c.d/n)"
   DatabasePassword:
-    Description: Password for Redshift and RDS Aurora Postgres databases.  It is a security best practice to change this password from the default.
-    Default: yourOHDSIpassword1
+    Description: Password for Redshift and RDS Aurora Postgres databases.  Must have at least one uppercase letter, one lowercase letter, one number, and can optinally have these special characters ~#%^*_+,-
     Type: String
     NoEcho: true
-    AllowedPattern: ^(?=.{8,32}$)(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9]).*
+    MaxLength: 41
+    MinLength: 8
+    AllowedPattern: ^([a-zA-Z0-9~#%^*_+,-])*$
     ConstraintDescription: "Must be between 8-32 characters and contain one or must upper case letters, lower case letters, and numbers."
+  RedshiftInstanceType:
+    Type: String
+    Description: DC instance types provide faster, but smaller storage.  DS instance types provide larger, but slower storage.
+    AllowedValues:
+      - dc2.large
+      - dc2.8xlarge
+      - ds2.xlarge
+      - ds2.8xlarge
+      - dc1.large
+    Default: dc2.large
   KPair:
     Description: The EC2 Key Pair to use for the Atlas/WebAPI EC2 Instances.
     Type: AWS::EC2::KeyPair::KeyName
@@ -40,10 +96,10 @@ Parameters:
       - true
       - false
     Default: false
-    Description: Set this to true if you want an R-Studio server deployed with OHDSI R Libraries installed.
+    Description: Set this to true if you want an RStudio server deployed with OHDSI R Libraries installed.
   RStudioInstanceType:
     Type: String
-    Description: Instance type for the R-Studio server.
+    Description: Larger instance types can support more concurrent users and intensive computation.
     AllowedValues:
       - t2.micro
       - t2.small
@@ -79,14 +135,13 @@ Parameters:
     ConstraintDescription: Valid instance type in the t2, m5, c5, r4, g2, p2, and g3 families
     Default: t2.xlarge
   RStudioHomeDirectorySize:
-    Description: Only used if the RStudio parameter is set to 'true'.  The amount of encrypted disk space, in GBs, allocated to store R-Studio user's local data.
+    Description: The amount of encrypted disk space, in GBs, allocated to store RStudio user's local data.
     Type: Number
     Default: 20
   RStudioUserList:
-    Description: Only used if the RStudio parameter is set to 'true'.  Provide a comma separated list of usernames and passwords (user1,pass1,user2,pass2) to create on the R-Studio Server.
+    Description: Provide a comma separated list of usernames and passwords (user1,pass1,user2,pass2) to create on the RStudio Server.
     Type: 'String'
     NoEcho: true
-    Default: 'rstudio,yourRSTUDIOpassword1'
 
 #Mapping to find the Amazon Linux AMI in each region.  This AMI is used for the temporary EC2 server.
 Mappings:
@@ -326,7 +381,7 @@ Resources:
       DBName: "mycdm"
       MasterUsername: "master"
       MasterUserPassword: !Ref DatabasePassword
-      NodeType: "dc1.large"
+      NodeType: !Ref RedshiftInstanceType
       ClusterType: "multi-node"
       NumberOfNodes: 2
       Encrypted: "True"
@@ -452,7 +507,6 @@ Resources:
       HealthyThresholdCount: 4
       Matcher:
         HttpCode: '200'
-      Name: !Sub 'OHDSIRstudio-${AWS::StackName}'
       Port: 80
       Protocol: HTTP
       TargetGroupAttributes:
@@ -463,3 +517,10 @@ Resources:
         Port: 8787
       UnhealthyThresholdCount: 3
       VpcId: !GetAtt 'VPCStack.Outputs.VPCId'
+
+
+Outputs:
+  AtlasURL:
+    Value: !Join ['', ['http://', !Ref EBEndpoint, '.', !Ref 'AWS::Region', '.elasticbeanstalk.com']]
+  RStudioURL:
+    Value: !Join ['', ['http://', 'rstudio', '.', !Ref EBEndpoint, '.', !Ref 'AWS::Region', '.elasticbeanstalk.com']]
